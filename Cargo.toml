@@ -3,9 +3,11 @@ name = "signal"
 version = "0.1.0"
 edition = "2021"
 
-# NOT: Sürümler, daha yeni ve stabil versiyonlarla güncellendi.
 [dependencies]
 tokio = { version = "1.37.0", features = ["full"] }
+
+# Artık SIP kütüphanesi YOK!
+# Sadece gRPC ve Protobuf için bunları tutuyoruz.
 tonic = "0.11.0"
 prost = "0.12.3"
 
