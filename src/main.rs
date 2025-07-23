@@ -2,16 +2,14 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use rand::Rng; // Rastgele tag üretmek için
+use rand::Rng;
 
-// --- BU BÖLÜM EKSİKTİ ---
 // gRPC istemcimiz için gerekli importlar
 pub mod voipcore {
     tonic::include_proto!("voipcore");
 }
 use voipcore::voip_core_client::VoipCoreClient;
 use voipcore::CallRequest;
-// -------------------------
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -44,12 +42,12 @@ async fn handle_sip_request(
     if request_str.starts_with("INVITE") {
         println!("\n--- INVITE Alındı [Kimden: {}] ---", addr);
 
-        if let Some(mut headers) = parse_headers(request_str) {
-            // --- EKSİK LOGLARI GERİ GETİRDİK ---
-            println!("   -> From    : {}", headers.get("From").cloned().unwrap_or_default());
-            println!("   -> To      : {}", headers.get("To").cloned().unwrap_or_default());
-            println!("   -> Call-ID : {}", headers.get("Call-ID").cloned().unwrap_or_default());
-            // ------------------------------------
+        if let Some(mut headers) = parse_complex_headers(request_str) {
+            println!("   -> From    : {}", headers.get("From").unwrap_or(&String::new()));
+            println!("   -> To      : {}", headers.get("To").unwrap_or(&String::new()));
+            println!("   -> Call-ID : {}", headers.get("Call-ID").unwrap_or(&String::new()));
+            println!("   -> Vias    : {}", headers.get("Via").unwrap_or(&String::new()));
+            println!("   -> Routes  : {}", headers.get("Record-Route").unwrap_or(&String::new()));
 
             let trying_response = create_response("100 Trying", &headers, None);
             sock.send_to(trying_response.as_bytes(), addr).await?;
@@ -60,8 +58,6 @@ async fn handle_sip_request(
                     println!("   <- Core'dan yanıt alındı: session_id={}", core_response.session_id);
                     
                     if core_response.status == 0 {
-                        println!("   -> Core aramayı onayladı. Cevaplar gönderiliyor...");
-
                         let to_header = headers.get("To").cloned().unwrap_or_default();
                         let to_tag = format!(";tag={}", generate_random_tag());
                         headers.insert("To".to_string(), format!("{}{}", to_header, to_tag));
@@ -71,12 +67,12 @@ async fn handle_sip_request(
                         
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-                        let public_ip = "34.122.40.122"; 
+                        let public_ip = "34.122.40.122";
                         let sdp_body = format!(
                             "v=0\r\n\
-                             o=- 0 0 IN IP4 127.0.0.1\r\n\
+                             o=- 0 0 IN IP4 {0}\r\n\
                              s=Centiric\r\n\
-                             c=IN IP4 {}\r\n\
+                             c=IN IP4 {0}\r\n\
                              t=0 0\r\n\
                              m=audio 9000 RTP/AVP 0\r\n\
                              a=rtpmap:0 PCMU/8000\r\n",
@@ -85,7 +81,6 @@ async fn handle_sip_request(
 
                         let ok_response = create_response("200 OK", &headers, Some(&sdp_body));
                         sock.send_to(ok_response.as_bytes(), addr).await?;
-
                         println!("   <- Arama başarıyla cevaplandı (200 OK gönderildi)!");
                     }
                 },
@@ -95,12 +90,13 @@ async fn handle_sip_request(
                     sock.send_to(error_response.as_bytes(), addr).await?;
                 }
             }
+        } else {
+             eprintln!("[HATA] Geçerli SIP başlıkları bulunamadı, istek yok sayılıyor.");
         }
     }
     Ok(())
 }
 
-// --- BU FONKSİYON EKSİKTİ ---
 /// Core servisine gRPC isteği gönderen fonksiyon.
 async fn route_call_with_core(headers: &HashMap<String, String>) -> Result<voipcore::CallResponse, Box<dyn Error + Send + Sync>> {
     let mut client = VoipCoreClient::connect("http://127.0.0.1:50051").await?;
@@ -113,28 +109,69 @@ async fn route_call_with_core(headers: &HashMap<String, String>) -> Result<voipc
     let response = client.route_call(request).await?;
     Ok(response.into_inner())
 }
-// ------------------------------
 
+/// Gelen SIP metnini ayrıştırır ve çoklu 'Via' ile 'Record-Route' başlıklarını doğru işler.
+fn parse_complex_headers(request: &str) -> Option<HashMap<String, String>> {
+    let mut headers = HashMap::new();
+    let mut via_headers = Vec::new();
+    let mut record_route_headers = Vec::new();
+
+    for line in request.lines() {
+        if line.is_empty() { break; }
+
+        if let Some((key, value)) = line.split_once(':') {
+            let key_trimmed = key.trim();
+            let value_trimmed = value.trim();
+
+            match key_trimmed.to_lowercase().as_str() {
+                "via" | "v" => via_headers.push(value_trimmed),
+                "record-route" => record_route_headers.push(value_trimmed),
+                _ => { headers.insert(key_trimmed.to_string(), value_trimmed.to_string()); }
+            }
+        }
+    }
+
+    if !via_headers.is_empty() {
+        headers.insert("Via".to_string(), via_headers.join("\r\nVia: "));
+        if !record_route_headers.is_empty() {
+            headers.insert("Record-Route".to_string(), record_route_headers.join("\r\nRecord-Route: "));
+        }
+        Some(headers)
+    } else {
+        None
+    }
+}
+
+/// Cevap oluştururken Record-Route'u da ekler.
 fn create_response(status_line: &str, headers: &HashMap<String, String>, sdp: Option<&str>) -> String {
     let body = sdp.unwrap_or("");
     let content_length = body.len();
 
+    let record_route_line = match headers.get("Record-Route") {
+        Some(routes) => format!("Record-Route: {}\r\n", routes),
+        None => String::new(),
+    };
+
     format!(
         "SIP/2.0 {}\r\n\
          Via: {}\r\n\
+         {}\
          From: {}\r\n\
          To: {}\r\n\
          Call-ID: {}\r\n\
          CSeq: {}\r\n\
+         Contact: <sip:{}@{}>\r\n\
          Content-Type: application/sdp\r\n\
          Content-Length: {}\r\n\r\n\
          {}",
         status_line,
         headers.get("Via").unwrap_or(&String::new()),
+        record_route_line,
         headers.get("From").unwrap_or(&String::new()),
         headers.get("To").unwrap_or(&String::new()),
         headers.get("Call-ID").unwrap_or(&String::new()),
         headers.get("CSeq").unwrap_or(&String::new()),
+        "902124548590", "34.122.40.122", // Contact başlığı için numara ve IP
         content_length,
         body
     )
@@ -142,14 +179,4 @@ fn create_response(status_line: &str, headers: &HashMap<String, String>, sdp: Op
 
 fn generate_random_tag() -> String {
     rand::thread_rng().gen::<u32>().to_string()
-}
-
-fn parse_headers(request: &str) -> Option<HashMap<String, String>> {
-    let mut headers = HashMap::new();
-    for line in request.lines().filter(|l| !l.is_empty()) {
-        if let Some((key, value)) = line.split_once(':') {
-            headers.insert(key.trim().to_string(), value.trim().to_string());
-        }
-    }
-    if headers.contains_key("Via") { Some(headers) } else { None }
 }
