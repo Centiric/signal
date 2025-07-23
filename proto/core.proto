@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+// Bu satır, Go derleyicisine ve protoc'a oluşturulan kodun
+// hangi pakete ait olduğunu söyler. Projenin modül yoluyla eşleşmelidir.
+option go_package = "github.com/Centiric/core/proto";
+
+package voipcore;
+
+service VoipCore {
+  rpc RouteCall (CallRequest) returns (CallResponse);
+}
+
+message CallRequest {
+  string from = 1;
+  string to = 2;
+}
+
+message CallResponse {
+  enum Status {
+    OK = 0;
+    FAILED = 1;
+  }
+  Status status = 1;
+  string session_id = 2;
+}
