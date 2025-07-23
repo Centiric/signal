@@ -42,17 +42,25 @@ async fn handle_sip_request(
     let request_str = std::str::from_utf8(request_bytes)?;
 
     if request_str.starts_with("INVITE") {
+        println!("\n--- INVITE Alındı [Kimden: {}] ---", addr);
+
         if let Some(mut headers) = parse_headers(request_str) {
+            // --- EKSİK LOGLARI GERİ GETİRDİK ---
+            println!("   -> From    : {}", headers.get("From").cloned().unwrap_or_default());
+            println!("   -> To      : {}", headers.get("To").cloned().unwrap_or_default());
+            println!("   -> Call-ID : {}", headers.get("Call-ID").cloned().unwrap_or_default());
+            // ------------------------------------
+
             let trying_response = create_response("100 Trying", &headers, None);
             sock.send_to(trying_response.as_bytes(), addr).await?;
-            println!("<<< '100 Trying' gönderildi.");
+            println!("   <- '100 Trying' gönderildi.");
 
             match route_call_with_core(&headers).await {
                 Ok(core_response) => {
-                    println!("<<< Core'dan yanıt alındı: {:?}", core_response);
+                    println!("   <- Core'dan yanıt alındı: session_id={}", core_response.session_id);
                     
                     if core_response.status == 0 {
-                        println!(">>> Core aramayı onayladı. Cevaplar gönderiliyor...");
+                        println!("   -> Core aramayı onayladı. Cevaplar gönderiliyor...");
 
                         let to_header = headers.get("To").cloned().unwrap_or_default();
                         let to_tag = format!(";tag={}", generate_random_tag());
@@ -63,7 +71,6 @@ async fn handle_sip_request(
                         
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-                        // ÖNEMLİ: Kendi Public IP adresinizi buraya yazın.
                         let public_ip = "34.122.40.122"; 
                         let sdp_body = format!(
                             "v=0\r\n\
@@ -79,7 +86,7 @@ async fn handle_sip_request(
                         let ok_response = create_response("200 OK", &headers, Some(&sdp_body));
                         sock.send_to(ok_response.as_bytes(), addr).await?;
 
-                        println!("<<< Arama başarıyla cevaplandı!");
+                        println!("   <- Arama başarıyla cevaplandı (200 OK gönderildi)!");
                     }
                 },
                 Err(e) => {
