@@ -46,18 +46,44 @@ async fn handle_sip_request(
 
     if request_str.starts_with("INVITE") {
         if let Some(headers) = parse_headers(request_str) {
+            // Adım 1: "100 Trying" göndererek zaman kazan.
             let trying_response = create_response("100 Trying", &headers);
             sock.send_to(trying_response.as_bytes(), addr).await?;
             println!("<<< '100 Trying' gönderildi.");
 
+            // Adım 2: Core servisine danış.
             println!(">>> Core servisine yönlendirme isteği gönderiliyor...");
             match route_call_with_core(&headers).await {
                 Ok(core_response) => {
                     println!("<<< Core'dan yanıt alındı: {:?}", core_response);
-                    // BİR SONRAKİ ADIMDA BURADA '180 Ringing' ve '200 OK' GÖNDERECEĞİZ
+                    
+                    // --- YENİ EKLENEN BÖLÜM ---
+                    // Eğer core "OK" dediyse, aramayı cevapla!
+                    if core_response.status == 0 { // 0, protobuf'da OK anlamına geliyor
+                        println!(">>> Core aramayı onayladı. '180 Ringing' ve '200 OK' gönderiliyor...");
+
+                        // Adım 3: "180 Ringing" gönder. Bu, arayana telefonun çaldığını bildirir.
+                        let ringing_response = create_response("180 Ringing", &headers);
+                        sock.send_to(ringing_response.as_bytes(), addr).await?;
+                        
+                        // Küçük bir bekleme süresi, bazı sistemler için daha stabil çalışır.
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                        // Adım 4: "200 OK" gönder. Bu, aramayı tamamen cevaplar.
+                        // NOT: Gelecekte bu cevabın içine SDP (medya bilgisi) ekleyeceğiz.
+                        let ok_response = create_response("200 OK", &headers);
+                        sock.send_to(ok_response.as_bytes(), addr).await?;
+
+                        println!("<<< Arama başarıyla cevaplandı!");
+                    }
+                    // -------------------------
+
                 },
                 Err(e) => {
                     eprintln!("[HATA] Core servisine ulaşılamadı: {}", e);
+                    // Hata durumunda arayana '503 Service Unavailable' gönder
+                    let error_response = create_response("503 Service Unavailable", &headers);
+                    sock.send_to(error_response.as_bytes(), addr).await?;
                 }
             }
         }
