@@ -4,7 +4,9 @@
 [sip]
 host = "0.0.0.0"
 port = 5060
-public_ip = "127.0.0.1" # Yerel test için. Sunucuda public IP'nizle değiştirin.
+# Bu IP adresi, SDP ve Contact başlıklarında dış dünyaya anons edilecektir.
+# Yerel test için 127.0.0.1, sunucu için sunucunun Public IP adresi olmalıdır.
+public_ip = "127.0.0.1"
 
 # Bağlanacağı core servisinin adresi
 [core]
