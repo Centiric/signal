@@ -46,8 +46,6 @@ async fn handle_sip_request(
             println!("   -> From    : {}", headers.get("From").unwrap_or(&String::new()));
             println!("   -> To      : {}", headers.get("To").unwrap_or(&String::new()));
             println!("   -> Call-ID : {}", headers.get("Call-ID").unwrap_or(&String::new()));
-            println!("   -> Vias    : {}", headers.get("Via").unwrap_or(&String::new()));
-            println!("   -> Routes  : {}", headers.get("Record-Route").unwrap_or(&String::new()));
 
             let trying_response = create_response("100 Trying", &headers, None);
             sock.send_to(trying_response.as_bytes(), addr).await?;
@@ -58,30 +56,46 @@ async fn handle_sip_request(
                     println!("   <- Core'dan yanıt alındı: session_id={}", core_response.session_id);
                     
                     if core_response.status == 0 {
-                        let to_header = headers.get("To").cloned().unwrap_or_default();
-                        let to_tag = format!(";tag={}", generate_random_tag());
-                        headers.insert("To".to_string(), format!("{}{}", to_header, to_tag));
+                        // --- OTOMASYON BÖLÜMÜ ---
+                        // Core'un sessionId'sine eklediği portu ayrıştırıyoruz.
+                        // Bu geçici bir çözümdür, ileride proto'yu güncelleyeceğiz.
+                        let parts: Vec<&str> = core_response.session_id.split("_port_").collect();
+                        if parts.len() == 2 {
+                            if let Ok(rtp_port) = parts[1].parse::<u16>() {
+                                println!("   -> Core'dan dinamik RTP portu alındı: {}", rtp_port);
 
-                        let ringing_response = create_response("180 Ringing", &headers, None);
-                        sock.send_to(ringing_response.as_bytes(), addr).await?;
-                        
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                let to_header = headers.get("To").cloned().unwrap_or_default();
+                                let to_tag = format!(";tag={}", generate_random_tag());
+                                headers.insert("To".to_string(), format!("{}{}", to_header, to_tag));
 
-                        let public_ip = "34.122.40.122";
-                        let sdp_body = format!(
-                            "v=0\r\n\
-                             o=- 0 0 IN IP4 {0}\r\n\
-                             s=Centiric\r\n\
-                             c=IN IP4 {0}\r\n\
-                             t=0 0\r\n\
-                             m=audio 9000 RTP/AVP 0\r\n\
-                             a=rtpmap:0 PCMU/8000\r\n",
-                             public_ip
-                        );
+                                let ringing_response = create_response("180 Ringing", &headers, None);
+                                sock.send_to(ringing_response.as_bytes(), addr).await?;
+                                
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-                        let ok_response = create_response("200 OK", &headers, Some(&sdp_body));
-                        sock.send_to(ok_response.as_bytes(), addr).await?;
-                        println!("   <- Arama başarıyla cevaplandı (200 OK gönderildi)!");
+                                // Yerel test için 127.0.0.1, sunucu için public IP kullanılmalı
+                                let public_ip = "127.0.0.1";
+                                let sdp_body = format!(
+                                    "v=0\r\n\
+                                     o=- 0 0 IN IP4 {0}\r\n\
+                                     s=Centiric\r\n\
+                                     c=IN IP4 {0}\r\n\
+                                     t=0 0\r\n\
+                                     m=audio {1} RTP/AVP 0\r\n\
+                                     a=rtpmap:0 PCMU/8000\r\n",
+                                     public_ip, rtp_port // DİNAMİK PORTU KULLANIYORUZ
+                                );
+
+                                let ok_response = create_response("200 OK", &headers, Some(&sdp_body));
+                                sock.send_to(ok_response.as_bytes(), addr).await?;
+                                println!("   <- Arama başarıyla cevaplandı (Dinamik Port: {})!", rtp_port);
+                            } else {
+                                eprintln!("[HATA] Core'dan gelen port parse edilemedi: {}", parts[1]);
+                            }
+                        } else {
+                            eprintln!("[HATA] Core'dan gelen session_id port bilgisi içermiyor: {}", core_response.session_id);
+                        }
+                        // --------------------------------------------------------
                     }
                 },
                 Err(e) => {
@@ -171,7 +185,7 @@ fn create_response(status_line: &str, headers: &HashMap<String, String>, sdp: Op
         headers.get("To").unwrap_or(&String::new()),
         headers.get("Call-ID").unwrap_or(&String::new()),
         headers.get("CSeq").unwrap_or(&String::new()),
-        "902124548590", "34.122.40.122", // Contact başlığı için numara ve IP
+        "902124548590", "127.0.0.1", // Contact başlığı için numara ve IP
         content_length,
         body
     )
