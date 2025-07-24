@@ -1,0 +1,11 @@
+# signal/config/default.toml
+
+# Signal servisinin kendi SIP (UDP) sunucusu ayarları
+[sip]
+host = "0.0.0.0"
+port = 5060
+public_ip = "127.0.0.1" # Yerel test için. Sunucuda public IP'nizle değiştirin.
+
+# Bağlanacağı core servisinin adresi
+[core]
+address = "http://127.0.0.1:50051"

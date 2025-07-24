@@ -4,13 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.37.0", features = ["full"] }
-
-# Artık SIP kütüphanesi YOK!
-# Sadece gRPC ve Protobuf için bunları tutuyoruz.
+tokio = { version = "1", features = ["full"] }
 tonic = "0.11.0"
 prost = "0.12.3"
 rand = "0.8.5"
+
+# --- YENİ EKLENEN KÜTÜPHANELER ---
+config = "0.14.0"
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+# ------------------------------------
 
 [build-dependencies]
 tonic-build = "0.11.0"
